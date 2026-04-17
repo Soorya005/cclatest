@@ -54,18 +54,18 @@ class RAGConfig:
     index_type: str = "flat"  # "flat", "ivf", "hnsw", "in_memory"
 
     # Retrieval
-    top_k: int = 5
+    top_k: int = 8
     similarity_threshold: float = 0.0
 
     # LLM
     llm_provider: str = "ollama"          # "ollama", "anthropic", "openai"
     llm_model: str = "llama3.2"
     llm_temperature: float = 0.0
-    llm_max_tokens: int = 512
+    llm_max_tokens: int = 1200
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
-    ollama_request_timeout: int = 180
+    ollama_request_timeout: int = 240
 
     # API keys (loaded from env vars automatically)
     anthropic_api_key: Optional[str] = None
@@ -105,6 +105,19 @@ class RAGConfig:
                     "[RAG Config] Invalid LLM_MAX_TOKENS='%s'; using default %d",
                     llm_max_tokens,
                     self.llm_max_tokens,
+                )
+
+        rag_top_k = os.getenv("RAG_TOP_K")
+        if rag_top_k:
+            try:
+                parsed_top_k = int(rag_top_k)
+                if parsed_top_k > 0:
+                    self.top_k = parsed_top_k
+            except ValueError:
+                logger.warning(
+                    "[RAG Config] Invalid RAG_TOP_K='%s'; using default %d",
+                    rag_top_k,
+                    self.top_k,
                 )
 
         ollama_url = os.getenv("OLLAMA_BASE_URL")
@@ -271,12 +284,12 @@ class LLMClient:
         url = f"{self.base_url}/api/generate"
         full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
 
-        max_predict = max(64, min(self.config.llm_max_tokens, 2048))
-        base_timeout = min(max(self.config.ollama_request_timeout, 15), 60)
-        retry_timeout = min(max(base_timeout + 15, 30), 90)
+        max_predict = max(128, min(self.config.llm_max_tokens, 4096))
+        base_timeout = min(max(self.config.ollama_request_timeout, 30), 240)
+        retry_timeout = min(max(base_timeout + 30, 60), 300)
         attempts = [
             (base_timeout, max_predict),
-            (retry_timeout, min(max_predict, 256)),
+            (retry_timeout, min(max_predict, 1024)),
         ]
 
         last_error: Optional[Exception] = None
@@ -335,13 +348,29 @@ class PromptBuilder:
             "Guidelines:\n"
             "- Reference specific file names and line numbers.\n"
             "- Provide code snippets from the context when helpful.\n"
+            "- For repository-summary requests, explain modules and structure clearly.\n"
             "- If context is insufficient, say so clearly."
         )
 
     @staticmethod
     def build_user_prompt(query: str, context_chunks: List[Tuple]) -> str:
         """Delegate to prompt_builder module for consistent formatting."""
-        return build_prompt(query, context_chunks)
+        from app.rag.prompt_builder import is_repo_summary_query
+
+        if is_repo_summary_query(query):
+            return build_prompt(
+                query,
+                context_chunks,
+                max_context_chunks=12,
+                max_chunk_chars=2200,
+            )
+
+        return build_prompt(
+            query,
+            context_chunks,
+            max_context_chunks=4,
+            max_chunk_chars=1400,
+        )
 
 
 # ─── RAG Pipeline ────────────────────────────────────────────────
@@ -719,6 +748,25 @@ class RAGPipeline:
         )
         return f"Found exact match(es) for '{needle}':\n{formatted_hits}"
 
+    @staticmethod
+    def _is_repo_summary_query(query: str) -> bool:
+        query_lower = query.lower()
+        return any(
+            term in query_lower
+            for term in [
+                "summarize",
+                "summary",
+                "overview",
+                "architecture",
+                "repo structure",
+                "repository structure",
+                "project structure",
+                "explain the repo",
+                "explain this repo",
+                "how is this repo organized",
+            ]
+        )
+
     # ── Full Query ───────────────────────────────────────────────
 
     def query(
@@ -743,7 +791,11 @@ class RAGPipeline:
         if not self.llm_client:
             self.llm_client = LLMClient(self.config)
 
-        retrieval_result = self.retrieve(query, top_k, filters)
+        effective_top_k = top_k
+        if effective_top_k is None and self._is_repo_summary_query(query):
+            effective_top_k = max(self.config.top_k, 12)
+
+        retrieval_result = self.retrieve(query, effective_top_k, filters)
 
         if not retrieval_result.chunks:
             logger.warning("[RAG Pipeline] No relevant chunks found for query: '%s'", query)
@@ -814,6 +866,7 @@ class RAGPipeline:
                 "chunks_used": len(retrieval_result.chunks),
                 "llm_model": self.config.llm_model,
                 "embedding_model": self.config.embedding_model,
+                    "effective_top_k": effective_top_k or self.config.top_k,
                 "used_compact_retry": used_compact_retry,
                 "generation_error": generation_error,
             },

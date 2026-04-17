@@ -13,17 +13,38 @@ from typing import List, Tuple
 logger = logging.getLogger(__name__)
 
 # Maximum number of retrieved chunks to include in a single prompt.
-MAX_CONTEXT_CHUNKS = 2
-MAX_CHUNK_CHARS = 800
+DEFAULT_MAX_CONTEXT_CHUNKS = 4
+DEFAULT_MAX_CHUNK_CHARS = 1400
+SUMMARY_MAX_CONTEXT_CHUNKS = 12
+SUMMARY_MAX_CHUNK_CHARS = 2200
 
 
-def _truncate_source_text(source_text: str) -> str:
-    if len(source_text) <= MAX_CHUNK_CHARS:
+def is_repo_summary_query(query: str) -> bool:
+    query_lower = query.lower()
+    summary_terms = [
+        "summarize",
+        "summary",
+        "overview",
+        "big picture",
+        "high level",
+        "architecture",
+        "repo structure",
+        "repository structure",
+        "project structure",
+        "explain the repo",
+        "explain this repo",
+        "how is this repo organized",
+    ]
+    return any(term in query_lower for term in summary_terms)
+
+
+def _truncate_source_text(source_text: str, max_chunk_chars: int) -> str:
+    if len(source_text) <= max_chunk_chars:
         return source_text
-    return source_text[:MAX_CHUNK_CHARS] + "\n\n... [truncated for prompt size]"
+    return source_text[:max_chunk_chars] + "\n\n... [truncated for prompt size]"
 
 
-def format_code_chunk(metadata, score: float) -> str:
+def format_code_chunk(metadata, score: float, max_chunk_chars: int) -> str:
     """
     Format a single (ChunkMetadata, score) pair into readable context text.
 
@@ -36,7 +57,7 @@ def format_code_chunk(metadata, score: float) -> str:
     Returns:
         A formatted string block for inclusion in the prompt.
     """
-    source_text = _truncate_source_text(metadata.source_text)
+    source_text = _truncate_source_text(metadata.source_text, max_chunk_chars)
 
     return (
         f"[FILE: {metadata.file_path}]\n"
@@ -47,7 +68,12 @@ def format_code_chunk(metadata, score: float) -> str:
     )
 
 
-def build_prompt(query: str, retrieved_chunks: List[Tuple]) -> str:
+def build_prompt(
+    query: str,
+    retrieved_chunks: List[Tuple],
+    max_context_chunks: int = DEFAULT_MAX_CONTEXT_CHUNKS,
+    max_chunk_chars: int = DEFAULT_MAX_CHUNK_CHARS,
+) -> str:
     """
     Assemble the final LLM prompt from the user query and retrieved chunks.
 
@@ -61,13 +87,14 @@ def build_prompt(query: str, retrieved_chunks: List[Tuple]) -> str:
         A complete prompt string ready to be sent to an LLM.
     """
     # Cap to maximum context chunks
-    chunks_to_use = retrieved_chunks[:MAX_CONTEXT_CHUNKS]
+    chunks_to_use = retrieved_chunks[:max_context_chunks]
+    summary_mode = is_repo_summary_query(query)
 
     if not chunks_to_use:
         logger.warning("[prompt_builder] No retrieved chunks – building prompt without context.")
 
     context_sections = [
-        format_code_chunk(metadata, score)
+        format_code_chunk(metadata, score, max_chunk_chars)
         for metadata, score in chunks_to_use
     ]
     context_block = "\n\n" + ("-" * 60 + "\n\n").join(context_sections)
@@ -78,12 +105,29 @@ def build_prompt(query: str, retrieved_chunks: List[Tuple]) -> str:
         query[:80],
     )
 
+    answer_format_instruction = (
+        ""
+        if not summary_mode
+        else """
+When the question asks for a repository summary or structure, answer with these sections:
+1) Repository purpose
+2) Top-level structure
+3) Key modules and responsibilities
+4) Request/data flow (if inferable from context)
+5) Notable design choices or gaps
+
+Keep the answer grounded in the provided files and cite specific file paths in prose.
+""".strip()
+    )
+
     prompt = f"""\
 You are an expert software engineer assisting with understanding a code repository.
 
 Use ONLY the provided repository context to answer the user's question.
 If the answer cannot be found in the context, respond with:
   "I could not find the answer in the provided code."
+
+{answer_format_instruction}
 
 {'=' * 60}
 REPOSITORY CONTEXT ({len(chunks_to_use)} chunk(s))
