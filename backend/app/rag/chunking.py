@@ -42,11 +42,44 @@ class CodeChunk:
 
 EXT_TO_LANGUAGE = {
     ".py":  "python",
+    ".pyi": "python",
     ".js":  "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
     ".java": "java",
     ".jsx": "javascript",
     ".ts":  "typescript",
     ".tsx": "tsx",
+    ".go": "go",
+    ".rs": "rust",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
+    ".cs": "c_sharp",
+    ".php": "php",
+    ".rb": "ruby",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".scala": "scala",
+    ".sql": "sql",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    ".ps1": "powershell",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".json": "json",
+    ".toml": "toml",
+    ".ini": "ini",
+    ".cfg": "ini",
+    ".env": "ini",
+    ".md": "markdown",
 }
 
 
@@ -231,8 +264,8 @@ def chunk_code_file(file_path: str, source_text: str) -> List[CodeChunk]:
     language = EXT_TO_LANGUAGE.get(ext)
 
     if not language:
-        logger.debug("[chunker] Unsupported extension for %s — skipping", file_path)
-        return []
+        logger.debug("[chunker] Unsupported extension for %s — using text fallback", file_path)
+        return [_make_file_chunk(file_path, source_text, "text")]
 
     if language == "python":
         return chunk_python_file(file_path, source_text)

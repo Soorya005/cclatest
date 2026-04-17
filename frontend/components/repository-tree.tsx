@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { ChevronRight, FileCode, Folder, FolderOpen } from "lucide-react"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import type { RepositoryTreeNode } from "@/lib/api"
 
@@ -44,12 +43,12 @@ export function RepositoryTree({ tree, isLoading, selectedFilePath, onSelectFile
       <div key={node.path}>
         <div
           className={cn(
-            "flex items-center gap-1 rounded-sm px-2 py-1 text-sm hover:bg-muted/40",
-            isDirectory ? "text-foreground" : "text-muted-foreground",
-            !isDirectory && selectedFilePath === node.path && "bg-muted text-foreground",
+            "flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-mono hover:bg-white/[0.05]",
+            isDirectory ? "text-white/70" : "text-white/50",
+            !isDirectory && selectedFilePath === node.path && "bg-white/[0.08] text-white",
             isDirectory ? "cursor-pointer" : "cursor-default"
           )}
-          style={{ paddingLeft: `${8 + depth * 14}px` }}
+          style={{ paddingLeft: `${8 + depth * 12}px` }}
           onClick={() => {
             if (isDirectory) {
               toggle(node.path)
@@ -70,7 +69,7 @@ export function RepositoryTree({ tree, isLoading, selectedFilePath, onSelectFile
           ) : (
             <>
               <span className="w-3.5" />
-              <FileCode className={cn("h-4 w-4", selectedFilePath === node.path ? "text-foreground" : "text-muted-foreground")} />
+              <FileCode className={cn("h-3.5 w-3.5", selectedFilePath === node.path ? "text-blue-400" : "text-white/40")} />
             </>
           )}
           <span className="truncate">{node.name}</span>
@@ -82,19 +81,16 @@ export function RepositoryTree({ tree, isLoading, selectedFilePath, onSelectFile
   }
 
   return (
-    <div className="border-b border-border bg-card">
-      <div className="px-3 py-2 text-sm font-medium text-foreground">Explorer</div>
-      <ScrollArea className="h-56 border-t border-border">
-        <div className="py-1">
-          {isLoading ? (
-            <div className="px-3 py-3 text-sm text-muted-foreground">Loading file tree...</div>
-          ) : tree.length === 0 ? (
-            <div className="px-3 py-3 text-sm text-muted-foreground">Load a repository to view files.</div>
-          ) : (
-            tree.map((node) => renderNode(node, 0))
-          )}
-        </div>
-      </ScrollArea>
+    <div className="w-full select-none">
+      <div className="py-1">
+        {isLoading ? (
+          <div className="px-2 py-3 text-xs text-white/30">Loading file tree...</div>
+        ) : tree.length === 0 ? (
+          <div className="px-2 py-3 text-xs text-white/30">Load a repository to view files.</div>
+        ) : (
+          tree.map((node) => renderNode(node, 0))
+        )}
+      </div>
     </div>
   )
 }

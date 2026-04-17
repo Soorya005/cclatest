@@ -51,6 +51,16 @@ npm run dev
 
 Frontend runs at: `http://localhost:3000`
 
+### Windows quick start
+
+From PowerShell in the repo root, run:
+
+```powershell
+.\run.ps1
+```
+
+This starts the backend and frontend together.
+
 ## 6) First run flow
 
 1. Register and login in UI
@@ -62,3 +72,66 @@ Frontend runs at: `http://localhost:3000`
 
 - Do **not** commit real `.env` files with secrets.
 - Local generated files (`backend/indexes/`, `backend/codechat.db`, `.venv/`) are ignored.
+
+## 7) CI/CD auto-sync to CodeChat (localhost via ngrok)
+
+This project already supports background re-indexing through:
+
+- `POST /repository/sync/{repo_id}?api_key=...`
+
+Use GitHub Actions in your target repository so every push to `main` triggers this endpoint.
+
+### Step A: Run backend and expose it with ngrok
+
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+In another terminal:
+
+```bash
+ngrok http 8000
+```
+
+Copy the public forwarding URL (example: `https://abc123.ngrok-free.app`).
+
+### Step B: Get `repo_id` and `sync_api_key` from CodeChat
+
+After login in UI, add your target repository URL.
+
+The backend response from `POST /repository/add` includes:
+
+- `repository_id` -> use as `CODECHAT_REPO_ID`
+- `sync_api_key` -> use as `CODECHAT_API_KEY`
+
+### Step C: Configure GitHub repository settings (target repo)
+
+In the target GitHub repository:
+
+- Settings -> Secrets and variables -> Actions -> **Secrets**
+	- Add `CODECHAT_API_KEY` with value from `sync_api_key`
+- Settings -> Secrets and variables -> Actions -> **Variables**
+	- Add `CODECHAT_URL` with your ngrok URL (no trailing slash)
+	- Add `CODECHAT_REPO_ID` with numeric `repository_id`
+
+### Step D: Enable workflow in target repo
+
+Use the workflow file at `.github/workflows/codechat-sync.yml`.
+
+It triggers on:
+
+- `push` to `main`
+- manual run (`workflow_dispatch`)
+
+### Step E: Validate
+
+1. Push a small commit to `main` in target repo.
+2. Confirm workflow success in GitHub Actions.
+3. In CodeChat UI, check status transitions `INDEXING` -> `INDEXED`.
+4. Query newly pushed code and verify updated answers.
+
+### Important for localhost + ngrok
+
+Each time ngrok URL changes, update GitHub Actions variable `CODECHAT_URL`.

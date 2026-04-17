@@ -1,0 +1,46 @@
+name: CodeChat Auto Sync
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  sync_codechat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate required configuration
+        env:
+          CODECHAT_URL: ${{ vars.CODECHAT_URL }}
+          CODECHAT_REPO_ID: ${{ vars.CODECHAT_REPO_ID }}
+          CODECHAT_API_KEY: ${{ secrets.CODECHAT_API_KEY }}
+        run: |
+          set -e
+          if [ -z "$CODECHAT_URL" ]; then
+            echo "Missing repository variable: CODECHAT_URL"
+            exit 1
+          fi
+          if [ -z "$CODECHAT_REPO_ID" ]; then
+            echo "Missing repository variable: CODECHAT_REPO_ID"
+            exit 1
+          fi
+          if [ -z "$CODECHAT_API_KEY" ]; then
+            echo "Missing repository secret: CODECHAT_API_KEY"
+            exit 1
+          fi
+
+      - name: Trigger CodeChat sync endpoint
+        env:
+          CODECHAT_URL: ${{ vars.CODECHAT_URL }}
+          CODECHAT_REPO_ID: ${{ vars.CODECHAT_REPO_ID }}
+          CODECHAT_API_KEY: ${{ secrets.CODECHAT_API_KEY }}
+        run: |
+          set -e
+          BASE_URL="${CODECHAT_URL%/}"
+          SYNC_URL="${BASE_URL}/repository/sync/${CODECHAT_REPO_ID}?api_key=${CODECHAT_API_KEY}"
+
+          echo "Triggering CodeChat sync for repo_id=${CODECHAT_REPO_ID}"
+          curl --fail-with-body --show-error --silent --request POST "$SYNC_URL"
+          echo "Sync request accepted"

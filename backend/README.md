@@ -77,6 +77,7 @@ GET  /repository/list
 GET  /repository/status/{repo_id}
 POST /repository/update-status
 POST /repository/index/{repo_id}
+POST /repository/sync/{repo_id}?api_key=...
 ```
 
 ### Chat / RAG
@@ -93,6 +94,20 @@ GET  /chat/repository
 ```
 GET /repository/index-path/{repo_id}
 ```
+
+---
+
+## GitHub Actions Auto Sync (main branch)
+
+When a repository is added with `POST /repository/add`, the response includes a `sync_api_key`.
+
+Configure these in the target GitHub repository:
+
+- Secret: `CODECHAT_API_KEY` (value = `sync_api_key`)
+- Variable: `CODECHAT_URL` (value = your public backend URL, such as ngrok URL)
+- Variable: `CODECHAT_REPO_ID` (value = numeric `repository_id` from repository add response)
+
+Use the workflow file at [../.github/workflows/codechat-sync.yml](../.github/workflows/codechat-sync.yml).
 
 ---
 

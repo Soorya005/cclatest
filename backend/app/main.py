@@ -129,11 +129,8 @@ def _save_snapshot_and_tree(source_dir: str, index_path: str) -> None:
     if os.path.exists(snapshot_dir):
         shutil.rmtree(snapshot_dir)
 
-    shutil.copytree(source_dir, snapshot_dir)
-
-    git_dir = os.path.join(snapshot_dir, ".git")
-    if os.path.exists(git_dir):
-        shutil.rmtree(git_dir)
+    # Avoid copying git metadata files that are commonly locked on Windows.
+    shutil.copytree(source_dir, snapshot_dir, ignore=shutil.ignore_patterns(".git"))
 
     tree = _build_tree_from_filesystem(snapshot_dir)
     with open(tree_cache, "w", encoding="utf-8") as tree_file:
@@ -226,9 +223,13 @@ def _build_tree_nodes(relative_paths: List[str]) -> List[Dict[str, Any]]:
 
     return convert(tree)
 
+_dev_origins = [f"http://localhost:{port}" for port in range(3000, 3011)] + [
+    f"http://127.0.0.1:{port}" for port in range(3000, 3011)
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_dev_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -312,7 +313,8 @@ def add_repository(
     return {
         "repository_id": repo.id,
         "repo_url": repo.repo_url,
-        "status": repo.status
+        "status": repo.status,
+        "sync_api_key": repo.sync_api_key
     }
 
 
@@ -547,12 +549,12 @@ def query_repository(
     }
 def background_index(repo_url: str, save_path: str, repo_id: int):
     db: Session = SessionLocal()
+    temp_dir: str | None = None
     try:
         temp_dir = clone_repository(repo_url)
         rag_pipeline = RAGPipeline(RAGConfig())
         rag_pipeline.index_repository(temp_dir, save_path=save_path)
         _save_snapshot_and_tree(temp_dir, save_path)
-        shutil.rmtree(temp_dir)
 
         repo = db.query(Repository).filter(Repository.id == repo_id).first()
         if repo:
@@ -569,6 +571,8 @@ def background_index(repo_url: str, save_path: str, repo_id: int):
             repo.status = RepoStatus.FAILED
             db.commit()
     finally:
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
         db.close()
 
 

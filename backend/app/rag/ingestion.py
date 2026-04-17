@@ -10,8 +10,21 @@ import git
 
 logger = logging.getLogger(__name__)
 
-# Supported code file extensions
-SUPPORTED_EXTENSIONS = (".py", ".js", ".java", ".ts", ".tsx", ".jsx")
+# Supported source/document extensions. Keep in sync with chunking dispatch.
+SUPPORTED_EXTENSIONS = (
+    ".py", ".pyi",
+    ".js", ".jsx", ".mjs", ".cjs",
+    ".ts", ".tsx",
+    ".java", ".kt", ".kts", ".scala",
+    ".go", ".rs",
+    ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx",
+    ".cs",
+    ".php", ".rb", ".swift", ".m", ".mm",
+    ".sh", ".bash", ".zsh", ".ps1",
+    ".sql",
+    ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".env",
+    ".md",
+)
 
 
 def clone_repository(repo_url: str) -> str:
@@ -45,8 +58,8 @@ def load_repository(repo_path: str):
     for root, _, files in os.walk(repo_path):
         for file in files:
 
-            # Only process supported file types
-            if not file.endswith(SUPPORTED_EXTENSIONS):
+            # Only process supported file types (case-insensitive)
+            if not file.lower().endswith(SUPPORTED_EXTENSIONS):
                 continue
 
             file_path = os.path.join(root, file)

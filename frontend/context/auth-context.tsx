@@ -47,16 +47,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter()
 
   useEffect(() => {
-    const storedToken = localStorage.getItem(TOKEN_KEY)
-    const storedUser = localStorage.getItem(USER_KEY)
-    if (storedToken && storedUser && !isTokenExpired(storedToken)) {
-      setToken(storedToken)
-      setUser(JSON.parse(storedUser))
-    } else {
+    try {
+      const storedToken = localStorage.getItem(TOKEN_KEY)
+      const storedUser = localStorage.getItem(USER_KEY)
+      if (storedToken && storedUser && !isTokenExpired(storedToken)) {
+        setToken(storedToken)
+        setUser(JSON.parse(storedUser))
+      } else {
+        localStorage.removeItem(TOKEN_KEY)
+        localStorage.removeItem(USER_KEY)
+      }
+    } catch (err) {
+      console.warn("Cleared corrupted auth data", err)
       localStorage.removeItem(TOKEN_KEY)
       localStorage.removeItem(USER_KEY)
+    } finally {
+      setIsLoading(false)
     }
-    setIsLoading(false)
   }, [])
 
   const login = async (
@@ -97,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
-    router.push("/login")
+    router.push("/landing")
   }
 
   return (

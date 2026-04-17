@@ -32,12 +32,9 @@ export function GitHubInput({ onSubmit, isLoading, status, currentRepo }: GitHub
   }
 
   return (
-    <div className="p-3 border-b border-border bg-card">
-      <form onSubmit={handleSubmit} className="flex items-center gap-3">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Github className="h-4 w-4" />
-          <span className="text-sm font-medium">Repository</span>
-        </div>
+    <div className="w-full">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-2">
+
         <div className="flex-1 flex items-center gap-2">
           <div className="relative flex-1">
             <Link className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -46,18 +43,18 @@ export function GitHubInput({ onSubmit, isLoading, status, currentRepo }: GitHub
               placeholder="https://github.com/username/repository"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              className="pl-10 bg-input border-border text-foreground placeholder:text-muted-foreground"
+              className="pl-9 h-9 text-xs bg-white/[0.02] border-white/10 text-white placeholder:text-white/30 focus-visible:ring-1 focus-visible:ring-white/20 rounded-md"
               disabled={isLoading}
             />
           </div>
-          <Button type="submit" disabled={isLoading || !url.trim()} size="sm">
+          <Button type="submit" disabled={isLoading || !url.trim()} size="sm" className="h-9 w-9 p-0 bg-white/10 text-white hover:bg-white/20 rounded-md border border-white/5">
             {isLoading ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 Loading...
               </>
             ) : (
-              "Load Repository"
+              <div className="flex items-center justify-center w-full h-full"><Link className="h-4 w-4" /></div>
             )}
           </Button>
         </div>
@@ -72,7 +69,7 @@ export function GitHubInput({ onSubmit, isLoading, status, currentRepo }: GitHub
             {status === "error" && (
               <>
                 <XCircle className="h-4 w-4 text-destructive" />
-                <span className="text-sm text-destructive">Failed to load</span>
+                <span className="text-xs text-destructive">Failed to load</span>
               </>
             )}
           </div>

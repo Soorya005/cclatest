@@ -4,7 +4,11 @@ import { Analytics } from '@vercel/analytics/next'
 import { AuthProvider } from '@/context/auth-context'
 import './globals.css'
 
-const _inter = Inter({ subsets: ["latin"] });
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800", "900"],
+  variable: "--font-inter",
+})
 
 export const metadata: Metadata = {
   title: 'Code Chat - AI-Powered Code Assistant',
@@ -30,7 +34,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#1a1a2e',
+  themeColor: '#000000',
 }
 
 export default function RootLayout({
@@ -40,7 +44,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="font-sans antialiased">
+      <body className={`${inter.variable} font-sans antialiased`}>
         <AuthProvider>
           {children}
         </AuthProvider>

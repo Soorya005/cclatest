@@ -11,4 +11,8 @@ jobs:
     steps:
       - name: Ping CodeChat Backend
         run: |
+          # Localhost example (when running CodeChat backend locally and using a tunnel URL):
+          # curl -X POST "http://127.0.0.1:8000/repository/sync/<REPO_ID>?api_key=${{ secrets.CODECHAT_API_KEY }}"
+          
+          # Replace <YOUR_CODECHAT_DOMAIN> with your public backend URL (for example from ngrok/cloudflared)
           curl -X POST "https://<YOUR_CODECHAT_DOMAIN>/repository/sync/<REPO_ID>?api_key=${{ secrets.CODECHAT_API_KEY }}"

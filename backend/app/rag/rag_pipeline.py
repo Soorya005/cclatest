@@ -61,7 +61,7 @@ class RAGConfig:
     llm_provider: str = "ollama"          # "ollama", "anthropic", "openai"
     llm_model: str = "llama3.2"
     llm_temperature: float = 0.0
-    llm_max_tokens: int = 256
+    llm_max_tokens: int = 512
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
@@ -271,10 +271,12 @@ class LLMClient:
         url = f"{self.base_url}/api/generate"
         full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
 
-        max_predict = min(self.config.llm_max_tokens, 512)
+        max_predict = max(64, min(self.config.llm_max_tokens, 2048))
+        base_timeout = min(max(self.config.ollama_request_timeout, 15), 60)
+        retry_timeout = min(max(base_timeout + 15, 30), 90)
         attempts = [
-            (self.config.ollama_request_timeout, max_predict),
-            (max(self.config.ollama_request_timeout, 240), max(96, max_predict // 2)),
+            (base_timeout, max_predict),
+            (retry_timeout, min(max_predict, 256)),
         ]
 
         last_error: Optional[Exception] = None
@@ -647,6 +649,76 @@ class RAGPipeline:
         )
         return f"Likely location(s) for your function:\n{formatted_hits}"
 
+    @staticmethod
+    def _extract_exact_search_term(query: str) -> Optional[str]:
+        """Extract a literal search term from natural language code-search prompts."""
+        query_stripped = query.strip()
+        query_lower = query_stripped.lower()
+
+        # Prefer quoted strings first.
+        quoted = re.findall(r"['\"]([^'\"]{2,})['\"]", query_stripped)
+        if quoted:
+            return quoted[0].strip()
+
+        # Common phrasing used in UI: "search for this statement ..."
+        marker = "search for this statement"
+        if marker in query_lower:
+            idx = query_lower.find(marker)
+            term = query_stripped[idx + len(marker):].strip(" :.-")
+            if term:
+                return term
+
+        # Fallback for code-like function calls, e.g. print(hi)
+        call_like = re.search(r"([a-zA-Z_][a-zA-Z0-9_]*\s*\([^\)]{0,120}\))", query_stripped)
+        if call_like:
+            return call_like.group(1).strip()
+
+        return None
+
+    def _build_exact_search_answer(self, term: str) -> Optional[str]:
+        """Search literal text across indexed chunks and return file:line hits."""
+        if not self.vector_store or not getattr(self.vector_store, "metadata", None):
+            return None
+
+        needle = term.strip()
+        if len(needle) < 2:
+            return None
+
+        needle_lower = needle.lower()
+        hits: List[Tuple[str, int, str]] = []
+
+        for metadata in self.vector_store.metadata:
+            source_lines = metadata.source_text.splitlines()
+            for line_offset, source_line in enumerate(source_lines):
+                if needle_lower in source_line.lower():
+                    hits.append(
+                        (metadata.file_path, metadata.start_line + line_offset, source_line.strip())
+                    )
+                    if len(hits) >= 8:
+                        break
+            if len(hits) >= 8:
+                break
+
+        if not hits:
+            return None
+
+        deduped_hits: List[Tuple[str, int, str]] = []
+        seen = set()
+        for file_path, line_number, snippet in hits:
+            key = (file_path, line_number)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_hits.append((file_path, line_number, snippet))
+            if len(deduped_hits) >= 5:
+                break
+
+        formatted_hits = "\n".join(
+            f"- {file_path}:{line_number} → {snippet[:180]}"
+            for file_path, line_number, snippet in deduped_hits
+        )
+        return f"Found exact match(es) for '{needle}':\n{formatted_hits}"
+
     # ── Full Query ───────────────────────────────────────────────
 
     def query(
@@ -683,6 +755,22 @@ class RAGPipeline:
                 metadata={"total_chunks_found": 0},
             )
 
+        exact_term = self._extract_exact_search_term(query)
+        if exact_term:
+            exact_answer = self._build_exact_search_answer(exact_term)
+            if exact_answer:
+                return RAGResponse(
+                    query=query,
+                    answer=exact_answer,
+                    retrieved_chunks=retrieval_result.chunks,
+                    context_used="",
+                    metadata={
+                        "total_chunks_found": retrieval_result.total_found,
+                        "chunks_used": len(retrieval_result.chunks),
+                        "mode": "deterministic_exact_search",
+                    },
+                )
+
         if self._is_location_query(query):
             location_answer = self._build_location_answer(query, retrieval_result.chunks)
             if location_answer:
@@ -712,32 +800,6 @@ class RAGPipeline:
             logger.warning("LLM generation failed: %s", exc)
             generation_error = str(exc)
             answer = ""
-
-            can_retry_timeout = (
-                self.config.llm_provider == "ollama"
-                and "timed out" in str(exc).lower()
-            )
-            if can_retry_timeout:
-                compact_chunks = retrieval_result.chunks[:1]
-                compact_prompt = self.prompt_builder.build_user_prompt(query, compact_chunks)
-                retry_timeout = max(self.config.ollama_request_timeout, 240)
-
-                logger.info(
-                    "[LLM] Retrying timed-out generation with compact context (1 chunk) and timeout=%ds",
-                    retry_timeout,
-                )
-
-                self.config.ollama_request_timeout = retry_timeout
-                if self.llm_client and hasattr(self.llm_client, "config"):
-                    self.llm_client.config.ollama_request_timeout = retry_timeout
-
-                try:
-                    answer = self.llm_client.generate(compact_prompt, system_prompt)
-                    used_compact_retry = True
-                    generation_error = None
-                except Exception as retry_exc:
-                    logger.warning("LLM retry failed: %s", retry_exc)
-                    generation_error = f"{exc}; retry: {retry_exc}"
 
             if not answer:
                 answer = self._build_fallback_answer(query, retrieval_result.chunks)

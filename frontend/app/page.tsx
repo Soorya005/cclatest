@@ -12,6 +12,7 @@ import { RepositoryTree } from "@/components/repository-tree"
 import { QueryInput } from "@/components/query-input"
 import { Button } from "@/components/ui/button"
 import { PanelLeftClose, PanelLeft } from "lucide-react"
+import { cn } from "@/lib/utils"
 import {
   apiAddRepository,
   apiGetRepositoryFileContent,
@@ -53,7 +54,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!authLoading && !user) {
-      router.push("/login")
+      router.push("/landing")
     }
   }, [user, authLoading, router])
 
@@ -384,8 +385,8 @@ export default function Home() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-muted-foreground">Loading...</div>
+      <div className="h-screen bg-black flex items-center justify-center">
+        <div className="text-white/30 font-mono text-sm">Loading workspace...</div>
       </div>
     )
   }
@@ -395,88 +396,89 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-black flex flex-col overflow-hidden text-white/90">
       <Header />
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar Toggle (mobile) */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Mobile toggle (hidden on desktop) */}
         <Button
           variant="ghost"
           size="icon"
-          className="absolute left-2 top-14 z-10 h-8 w-8 md:hidden"
+          className="lg:hidden absolute left-2 top-14 z-50 h-8 w-8 bg-[#0a0a0a] border border-white/10"
           onClick={() => setSidebarOpen(!sidebarOpen)}
         >
-          {sidebarOpen ? (
-            <PanelLeftClose className="h-4 w-4" />
-          ) : (
-            <PanelLeft className="h-4 w-4" />
-          )}
+          {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
         </Button>
 
-        {/* Chat History Sidebar */}
+        {/* --- LEFT PANE (SIDEBAR) --- */}
         <div
-          className={`${sidebarOpen ? "w-64" : "w-0"
-            } transition-all duration-300 overflow-hidden flex-shrink-0`}
+          className={cn(
+            "flex flex-col bg-[#0a0a0a] border-r border-white/5 transition-all duration-300 flex-shrink-0 z-40 absolute lg:relative h-full",
+            sidebarOpen ? "w-[300px] lg:w-[320px] left-0" : "-left-[300px] lg:left-0 w-[0px] lg:w-[320px]"
+          )}
         >
-          <ChatSidebar
-            sessions={sessions}
-            activeSessionId={activeSessionId}
-            onSelectSession={handleSelectSession}
-            onNewSession={handleNewSession}
-            onDeleteSession={handleDeleteSession}
-          />
+          <div className="flex-1 overflow-y-auto px-4 py-6 space-y-8 scrollbar-thin scrollbar-thumb-white/10">
+            {/* Repository Section */}
+            <div className="space-y-3">
+              <p className="text-[10px] font-bold text-white/30 tracking-widest uppercase mb-2 ml-1">REPOSITORY</p>
+              <GitHubInput
+                onSubmit={handleLoadRepo}
+                isLoading={isLoadingRepo}
+                status={repoStatus}
+                currentRepo={currentRepo}
+              />
+            </div>
+
+            {/* Explorer Section */}
+            {(repoStatus === "success" || repoStatus === "loading") && (
+              <div className="space-y-3">
+                <p className="text-[10px] font-bold text-white/30 tracking-widest uppercase mb-2 ml-1">EXPLORER</p>
+                <RepositoryTree
+                  tree={fileTree}
+                  isLoading={isLoadingTree}
+                  selectedFilePath={selectedFilePath}
+                  onSelectFile={handleSelectFile}
+                />
+              </div>
+            )}
+
+            {/* Chat History Section */}
+            <div className="space-y-3">
+              <p className="text-[10px] font-bold text-white/30 tracking-widest uppercase mb-2 ml-1">CHAT HISTORY</p>
+              <ChatSidebar
+                sessions={sessions}
+                activeSessionId={activeSessionId}
+                onSelectSession={handleSelectSession}
+                onNewSession={handleNewSession}
+                onDeleteSession={handleDeleteSession}
+              />
+            </div>
+          </div>
         </div>
 
-        {/* Main Content Area */}
-        <div className="flex-1 flex flex-col min-w-0">
-          {/* GitHub Input */}
-          <GitHubInput
-            onSubmit={handleLoadRepo}
-            isLoading={isLoadingRepo}
-            status={repoStatus}
-            currentRepo={currentRepo}
-          />
-
-          <RepositoryTree
-            tree={fileTree}
-            isLoading={isLoadingTree}
-            selectedFilePath={selectedFilePath}
-            onSelectFile={handleSelectFile}
-          />
-
+        {/* --- MIDDLE PANE (CODE EDITOR) --- */}
+        <div className="flex-1 flex flex-col bg-black min-w-0 border-r border-white/5">
           <FilePreview
             filePath={selectedFilePath}
             content={selectedFileContent}
             isLoading={isLoadingFileContent}
             truncated={isFileContentTruncated}
           />
-
-          {/* AI Explanations Panel */}
-          <div className="flex-1 overflow-hidden">
-            <AIExplanationPanel messages={messages} isLoading={isLoadingMessage} />
-          </div>
-
-          {/* Query Input */}
-          <QueryInput
-            onSubmit={handleSendQuery}
-            isLoading={isLoadingMessage}
-            disabled={repoStatus !== "success"}
-          />
         </div>
 
-        {/* Desktop Sidebar Toggle */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="hidden md:flex absolute left-2 top-14 z-10 h-8 w-8"
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-        >
-          {sidebarOpen ? (
-            <PanelLeftClose className="h-4 w-4" />
-          ) : (
-            <PanelLeft className="h-4 w-4" />
-          )}
-        </Button>
+        {/* --- RIGHT PANE (COPILOT CHATBOT) --- */}
+        <div className="w-[400px] hidden xl:flex flex-col bg-[#050505] flex-shrink-0 relative">
+          <div className="flex-1 min-h-0">
+            <AIExplanationPanel messages={messages} isLoading={isLoadingMessage} />
+          </div>
+          <div className="flex-shrink-0 z-10 bg-[#050505]">
+            <QueryInput
+              onSubmit={handleSendQuery}
+              isLoading={isLoadingMessage}
+              disabled={repoStatus !== "success"}
+            />
+          </div>
+        </div>
       </div>
     </div>
   )

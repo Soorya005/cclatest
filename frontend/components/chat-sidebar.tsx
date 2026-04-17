@@ -42,25 +42,20 @@ export function ChatSidebar({
   }
 
   return (
-    <div className="h-full flex flex-col bg-sidebar border-r border-sidebar-border">
-      <div className="p-3 border-b border-sidebar-border">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-medium text-sidebar-foreground">Chat History</h2>
-          <span className="text-xs text-muted-foreground">{sessions.length}</span>
-        </div>
+    <div className="flex flex-col space-y-4 w-full">
         <Button
           onClick={onNewSession}
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="w-full justify-start gap-2 text-sidebar-foreground border-sidebar-border hover:bg-sidebar-accent"
+          className="w-full justify-start gap-2 h-8 px-2 text-xs text-white/50 hover:text-white hover:bg-white/[0.05] rounded-md transition-colors"
         >
           <Plus className="h-4 w-4" />
           New Chat
         </Button>
-      </div>
+
 
       <ScrollArea className="flex-1">
-        <div className="p-2 space-y-1">
+        <div className="space-y-1">
           {sessions.length === 0 ? (
             <div className="px-3 py-8 text-center">
               <MessageSquare className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
@@ -72,10 +67,10 @@ export function ChatSidebar({
               <div
                 key={session.id}
                 className={cn(
-                  "group relative flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors",
+                  "group relative flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
                   activeSessionId === session.id
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "hover:bg-sidebar-accent/50 text-sidebar-foreground"
+                    ? "bg-white/[0.08] text-white"
+                    : "hover:bg-white/[0.03] text-white/50"
                 )}
                 onClick={() => onSelectSession(session.id)}
                 onMouseEnter={() => setHoveredId(session.id)}
@@ -83,13 +78,13 @@ export function ChatSidebar({
               >
                 <ChevronRight
                   className={cn(
-                    "h-3 w-3 flex-shrink-0 transition-transform",
+                    "h-3 w-3 flex-shrink-0 transition-transform opacity-50 group-hover:opacity-100",
                     activeSessionId === session.id && "rotate-90"
                   )}
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm truncate">{session.title}</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs truncate font-medium">{session.title}</p>
+                  <p className="text-[10px] text-white/30 hidden group-hover:block transition-all">
                     {formatDate(session.timestamp)} · {session.messages} messages
                   </p>
                 </div>
