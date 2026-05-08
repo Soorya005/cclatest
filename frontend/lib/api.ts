@@ -171,7 +171,99 @@ export async function apiQueryRepository(
       `${BASE_URL}/chat/query?repo_id=${repo_id}&query=${encodeURIComponent(query)}`,
       { method: "POST", headers: authHeaders(token), signal: controller.signal }
     )
-    return handleResponse(res)
+
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const contentType = res.headers.get("content-type") || ""
+        if (contentType.includes("application/json")) {
+          const body = await res.json()
+          detail = body.detail ?? JSON.stringify(body)
+        } else {
+          const textBody = await res.text()
+          if (textBody.trim()) {
+            detail = textBody
+          }
+        }
+      } catch {
+        // ignore parse errors and keep status text
+      }
+      throw new Error(detail)
+    }
+
+    const contentType = res.headers.get("content-type") || ""
+    if (!contentType.includes("application/x-ndjson")) {
+      return handleResponse(res)
+    }
+
+    const reader = res.body?.getReader()
+    if (!reader) {
+      throw new Error("Streaming response body is unavailable")
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let answer = ""
+    let finalSources: QuerySource[] = []
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+
+        let payload: Record<string, unknown>
+        try {
+          payload = JSON.parse(trimmed) as Record<string, unknown>
+        } catch {
+          continue
+        }
+
+        const doneFlag = payload.done === true
+        const delta = typeof payload.delta === "string" ? payload.delta : ""
+        if (delta) {
+          answer += delta
+        }
+
+        if (doneFlag) {
+          if (typeof payload.answer === "string" && payload.answer.trim()) {
+            answer = payload.answer
+          }
+          if (Array.isArray(payload.sources)) {
+            finalSources = payload.sources as QuerySource[]
+          }
+          return {
+            answer: answer || "No response generated.",
+            sources: finalSources,
+          }
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      try {
+        const payload = JSON.parse(buffer.trim()) as Record<string, unknown>
+        if (typeof payload.answer === "string" && payload.answer.trim()) {
+          answer = payload.answer
+        }
+        if (Array.isArray(payload.sources)) {
+          finalSources = payload.sources as QuerySource[]
+        }
+      } catch {
+        // ignore trailing non-json fragment
+      }
+    }
+
+    return {
+      answer: answer || "No response generated.",
+      sources: finalSources,
+    }
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error(

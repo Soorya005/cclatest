@@ -35,7 +35,7 @@ In a separate terminal:
 
 ```bash
 ollama serve
-ollama pull llama3.2:1b
+ollama pull qwen2.5-coder:1.5b-instruct-q4_K_M
 ```
 
 ## 5) Frontend setup

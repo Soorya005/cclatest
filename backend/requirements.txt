@@ -14,5 +14,5 @@ tree-sitter
 tree-sitter-languages
 requests
 gitpython
-google-generativeai
+google-genai
 groq

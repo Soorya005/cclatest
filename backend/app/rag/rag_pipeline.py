@@ -45,7 +45,7 @@ except Exception:
     GROQ_AVAILABLE = False
 
 try:
-    google_genai = importlib.import_module("google.generativeai")
+    google_genai = importlib.import_module("google.genai")
     GOOGLE_GENAI_AVAILABLE = True
 except Exception:
     google_genai = None
@@ -257,8 +257,7 @@ class LLMClient:
         """Pre-initialise Gemini and Groq clients for use as fallbacks."""
         if self._gemini_client is None and GOOGLE_GENAI_AVAILABLE and self.config.gemini_api_key:
             try:
-                google_genai.configure(api_key=self.config.gemini_api_key)
-                self._gemini_client = google_genai.GenerativeModel(self.config.gemini_model)
+                self._gemini_client = google_genai.Client(api_key=self.config.gemini_api_key)
                 logger.info("[LLM] Gemini fallback client ready (model=%s)", self.config.gemini_model)
             except Exception as exc:
                 logger.warning("[LLM] Could not init Gemini fallback client: %s", exc)
@@ -425,16 +424,19 @@ class LLMClient:
 
         Works with two different client styles:
         - Primary provider: self.client is a GeminiClient (wrapper from gemini_client.py).
-        - Fallback:         self._gemini_client is a raw google.generativeai GenerativeModel.
+        - Fallback:         self._gemini_client is a raw google.genai Client.
         """
         # Primary provider path (GeminiClient wrapper)
         if self.provider == "gemini" and self.client is not None:
             return self.client.generate(prompt, system_prompt)
 
-        # Fallback path (raw google-generativeai model)
+        # Fallback path (raw google-genai client)
         if self._gemini_client is not None:
             full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-            response = self._gemini_client.generate_content(full_prompt)
+            response = self._gemini_client.models.generate_content(
+                model=self.config.gemini_model,
+                contents=full_prompt
+            )
             return response.text
 
         raise RuntimeError("Gemini client is not initialised.")
