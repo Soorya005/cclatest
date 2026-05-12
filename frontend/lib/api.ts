@@ -276,6 +276,106 @@ export async function apiQueryRepository(
   }
 }
 
+export async function apiStreamQuery(
+  token: string,
+  repo_id: number,
+  query: string,
+  onDelta: (delta: string) => void
+): Promise<QueryResponse> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), QUERY_TIMEOUT_MS)
+
+  try {
+    const res = await fetch(
+      `${BASE_URL}/chat/stream?repo_id=${repo_id}&query=${encodeURIComponent(query)}`,
+      { method: "POST", headers: authHeaders(token), signal: controller.signal }
+    )
+
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const body = await res.json()
+        detail = body.detail ?? JSON.stringify(body)
+      } catch {
+        // ignore JSON parse error
+      }
+      throw new Error(detail)
+    }
+
+    const reader = res.body?.getReader()
+    if (!reader) {
+      throw new Error("Streaming response body is unavailable")
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let answer = ""
+    let finalSources: QuerySource[] = []
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+
+        let payload: Record<string, unknown>
+        try {
+          payload = JSON.parse(trimmed) as Record<string, unknown>
+        } catch {
+          continue
+        }
+
+        const delta = typeof payload.delta === "string" ? payload.delta : ""
+        if (delta) {
+          answer += delta
+          onDelta(delta)
+        }
+
+        if (payload.done === true) {
+          if (Array.isArray(payload.sources)) {
+            finalSources = payload.sources as QuerySource[]
+          }
+          return {
+            answer: answer,
+            sources: finalSources,
+          }
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      try {
+        const payload = JSON.parse(buffer.trim()) as Record<string, unknown>
+        if (Array.isArray(payload.sources)) {
+          finalSources = payload.sources as QuerySource[]
+        }
+      } catch {
+        // ignore trailing non-json fragment
+      }
+    }
+
+    return {
+      answer: answer,
+      sources: finalSources,
+    }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(
+        `Request timed out after ${Math.floor(QUERY_TIMEOUT_MS / 1000)} seconds. Please try again.`
+      )
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 export interface ChatHistoryItem {
   id: number
   repository_url: string

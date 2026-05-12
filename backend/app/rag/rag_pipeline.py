@@ -229,6 +229,56 @@ class LLMClient:
 
         return ""
 
+    def generate_stream(self, prompt: str, system_prompt: Optional[str] = None):
+        """Yields string tokens from the configured LLM streaming API."""
+        if self.provider == "anthropic":
+            kwargs = {
+                "model": self.config.llm_model,
+                "max_tokens": self.config.llm_max_tokens,
+                "temperature": self.config.llm_temperature,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            if system_prompt:
+                kwargs["system"] = system_prompt
+            with self.client.messages.stream(**kwargs) as stream:
+                for text in stream.text_stream:
+                    yield text
+            return
+
+        if self.provider == "openai":
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+            response = self.client.chat.completions.create(
+                model=self.config.llm_model,
+                messages=messages,
+                temperature=self.config.llm_temperature,
+                max_tokens=self.config.llm_max_tokens,
+                stream=True,
+            )
+            for chunk in response:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
+            return
+
+        if self.provider == "groq":
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+            completion = self.client.chat.completions.create(
+                model=self.config.llm_model,
+                messages=messages,
+                temperature=self.config.llm_temperature,
+                max_tokens=self.config.llm_max_tokens,
+                stream=True,
+            )
+            for chunk in completion:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
+            return
+
 
 class PromptBuilder:
     """Builds system and user prompts for the RAG pipeline."""
@@ -714,6 +764,130 @@ class RAGPipeline:
             ]
         )
 
+    @staticmethod
+    def _query_prefers_python(query: str) -> bool:
+        query_lower = query.lower()
+        wants_python = bool(
+            re.search(r"\bpython\b", query_lower)
+            or re.search(r"\.py\b", query_lower)
+            or "python file" in query_lower
+            or "py file" in query_lower
+        )
+        if not wants_python:
+            return False
+
+        other_language_markers = [
+            r"\bjavascript\b", r"\.js\b",
+            r"\btypescript\b", r"\.ts\b", r"\.tsx\b",
+            r"\bjava\b", r"\.java\b",
+            r"\bgo\b", r"\.go\b",
+            r"\brust\b", r"\.rs\b",
+            r"\bcsharp\b", r"\bc#\b", r"\.cs\b",
+            r"\bphp\b", r"\.php\b",
+            r"\bruby\b", r"\.rb\b",
+            r"\bswift\b", r"\.swift\b",
+            r"\bkotlin\b", r"\.kt\b", r"\.kts\b",
+            r"\bscala\b", r"\.scala\b",
+        ]
+        return not any(re.search(marker, query_lower) for marker in other_language_markers)
+
+    @staticmethod
+    def _extract_file_hint(query: str) -> Optional[str]:
+        pattern = (
+            r"([A-Za-z0-9_\-./\\]+?\."
+            r"(?:py|pyi|js|jsx|mjs|cjs|ts|tsx|java|kt|kts|scala|go|rs|c|h|cpp|cc|cxx|hpp|hh|hxx|"
+            r"cs|php|rb|swift|m|mm|sh|bash|zsh|ps1|sql|yaml|yml|json|toml|ini|cfg|env|md))\b"
+        )
+        matches = re.findall(pattern, query, flags=re.IGNORECASE)
+        if not matches:
+            return None
+
+        # Use the most specific token from the query and normalize separators.
+        candidate = matches[-1].strip("`'\"()[]{}<>.,:;")
+        return candidate.replace("\\", "/").lower() if candidate else None
+
+    @staticmethod
+    def _is_file_explanation_query(query: str, file_hint: Optional[str]) -> bool:
+        if not file_hint:
+            return False
+
+        query_lower = query.lower()
+        explanation_markers = [
+            "what does",
+            "what is",
+            "explain",
+            "overview",
+            "summary",
+            "summarize",
+            "describe",
+            "purpose",
+        ]
+        return any(marker in query_lower for marker in explanation_markers)
+
+    def _retrieve_with_query_hints(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        filters: Optional[Dict] = None,
+    ) -> RetrievalResult:
+        file_hint = self._extract_file_hint(query)
+        is_file_explanation_query = self._is_file_explanation_query(query, file_hint)
+        retrieval_top_k = top_k or self.config.top_k
+        if is_file_explanation_query:
+            retrieval_top_k = max(retrieval_top_k, 12)
+        effective_filters = dict(filters) if filters else {}
+
+        if "language" not in effective_filters and self._query_prefers_python(query):
+            effective_filters["language"] = "python"
+
+        retrieval_result = self.retrieve(
+            query=query,
+            top_k=retrieval_top_k,
+            filters=effective_filters or None,
+        )
+
+        if not file_hint:
+            return retrieval_result
+
+        if is_file_explanation_query and self.vector_store and getattr(self.vector_store, "metadata", None):
+            file_context_hits = [
+                (metadata, 1.0)
+                for metadata in self.vector_store.metadata
+                if file_hint in metadata.file_path.lower()
+            ][:retrieval_top_k]
+            if file_context_hits:
+                return RetrievalResult(
+                    chunks=file_context_hits,
+                    query=query,
+                    total_found=len(file_context_hits),
+                )
+
+        hinted = [(meta, score) for meta, score in retrieval_result.chunks if file_hint in meta.file_path.lower()]
+        if hinted:
+            non_hinted = [(meta, score) for meta, score in retrieval_result.chunks if file_hint not in meta.file_path.lower()]
+            merged = (hinted + non_hinted)[:retrieval_top_k]
+            return RetrievalResult(
+                chunks=merged,
+                query=query,
+                total_found=len(merged),
+            )
+
+        if self.vector_store and getattr(self.vector_store, "metadata", None):
+            direct_file_hits = []
+            for metadata in self.vector_store.metadata:
+                if file_hint in metadata.file_path.lower():
+                    direct_file_hits.append((metadata, 1.0))
+                if len(direct_file_hits) >= retrieval_top_k:
+                    break
+            if direct_file_hits:
+                return RetrievalResult(
+                    chunks=direct_file_hits,
+                    query=query,
+                    total_found=len(direct_file_hits),
+                )
+
+        return retrieval_result
+
     # ── Full Query ───────────────────────────────────────────────
 
     def query(
@@ -739,10 +913,12 @@ class RAGPipeline:
             self.llm_client = LLMClient(self.config)
 
         effective_top_k = top_k
-        if effective_top_k is None and self._is_repo_summary_query(query):
+        file_hint = self._extract_file_hint(query)
+        is_file_explanation_query = self._is_file_explanation_query(query, file_hint)
+        if effective_top_k is None and (self._is_repo_summary_query(query) or is_file_explanation_query):
             effective_top_k = max(self.config.top_k, 12)
 
-        retrieval_result = self.retrieve(query, effective_top_k, filters)
+        retrieval_result = self._retrieve_with_query_hints(query, effective_top_k, filters)
 
         if not retrieval_result.chunks:
             logger.warning("[RAG Pipeline] No relevant chunks found for query: '%s'", query)
@@ -822,6 +998,61 @@ class RAGPipeline:
                 "generation_error": generation_error,
             },
         )
+
+    def query_stream(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        filters: Optional[Dict] = None,
+    ):
+        """
+        Runs retrieval and returns (sources_list, generator)
+        where generator yields string tokens.
+        """
+        if not self.llm_client:
+            self.llm_client = LLMClient(self.config)
+
+        effective_top_k = top_k
+        file_hint = self._extract_file_hint(query)
+        is_file_explanation_query = self._is_file_explanation_query(query, file_hint)
+        if effective_top_k is None and (self._is_repo_summary_query(query) or is_file_explanation_query):
+            effective_top_k = max(self.config.top_k, 12)
+
+        retrieval_result = self._retrieve_with_query_hints(query, effective_top_k, filters)
+
+        def simple_generator(text):
+            yield text
+            
+        if not retrieval_result.chunks:
+            logger.warning("[RAG Pipeline] No relevant chunks found for query: '%s'", query)
+            return retrieval_result.chunks, simple_generator("No relevant code found in the repository for this query.")
+
+        exact_term = self._extract_exact_search_term(query)
+        if exact_term:
+            exact_answer = self._build_exact_search_answer(exact_term)
+            if exact_answer:
+                return retrieval_result.chunks, simple_generator(exact_answer)
+
+        if self._is_location_query(query):
+            location_answer = self._build_location_answer(query, retrieval_result.chunks)
+            if location_answer:
+                return retrieval_result.chunks, simple_generator(location_answer)
+
+        system_prompt = self.prompt_builder.build_system_prompt()
+        user_prompt = self.prompt_builder.build_user_prompt(query, retrieval_result.chunks)
+
+        logger.info("[LLM] Generating answer stream via %s…", self.config.llm_provider)
+
+        def stream_generator():
+            try:
+                for token in self.llm_client.generate_stream(user_prompt, system_prompt):
+                    yield token
+            except Exception as exc:
+                logger.warning("LLM stream generation failed: %s", exc)
+                fallback = self._build_fallback_answer(query, retrieval_result.chunks, generation_error=str(exc))
+                yield fallback
+
+        return retrieval_result.chunks, stream_generator()
 
     # ── Interactive Mode ─────────────────────────────────────────
 

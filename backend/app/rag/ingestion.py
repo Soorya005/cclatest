@@ -63,6 +63,9 @@ def load_repository(repo_path: str):
                 continue
 
             file_path = os.path.join(root, file)
+            rel_path = os.path.relpath(file_path, repo_path)
+            # Normalize to forward slashes
+            rel_path = rel_path.replace("\\", "/")
 
             logger.debug(f"reading file: {file_path}")
 
@@ -75,7 +78,7 @@ def load_repository(repo_path: str):
                     continue
 
                 documents.append({
-                    "file_path": file_path,
+                    "file_path": rel_path,
                     "content": content
                 })
 

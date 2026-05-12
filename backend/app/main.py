@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, Header
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import json
@@ -222,6 +223,31 @@ def _build_tree_nodes(relative_paths: List[str]) -> List[Dict[str, Any]]:
         return directories + files
 
     return convert(tree)
+
+def _get_common_prefix_for_repo(rag_pipeline: RAGPipeline) -> str:
+    if not rag_pipeline.vector_store or not getattr(rag_pipeline.vector_store, "metadata", None):
+        return ""
+    paths = [m.file_path for m in rag_pipeline.vector_store.metadata if m.file_path]
+    normalized = [os.path.normpath(p) for p in paths if p]
+    if not normalized:
+        return ""
+    try:
+        return os.path.commonpath(normalized)
+    except ValueError:
+        return ""
+
+def _format_source_path(file_path: str, common_prefix: str) -> str:
+    if not file_path:
+        return ""
+    if common_prefix:
+        try:
+            rel_path = os.path.relpath(file_path, common_prefix)
+        except ValueError:
+            rel_path = os.path.basename(file_path)
+    else:
+        rel_path = os.path.basename(file_path)
+    rel_path = rel_path.replace("\\", "/")
+    return rel_path if rel_path and rel_path != "." else file_path
 
 _dev_origins = [f"http://localhost:{port}" for port in range(3000, 3011)] + [
     f"http://127.0.0.1:{port}" for port in range(3000, 3011)
@@ -536,17 +562,61 @@ def query_repository(
         response_text=response.answer
     )
 
+    common_prefix = _get_common_prefix_for_repo(rag_pipeline)
+
     return {
         "answer": response.answer,
         "sources": [
             {
-                "file": meta.file_path,
+                "file": _format_source_path(meta.file_path, common_prefix),
                 "symbol": meta.symbol_name,
                 "line": meta.start_line
             }
             for meta, score in response.retrieved_chunks
         ]
     }
+
+@app.post("/chat/stream")
+def stream_query(
+    repo_id: int,
+    query: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    repo = get_repository_if_indexed(db, repo_id, current_user.id)
+    rag_pipeline = get_or_create_pipeline(repo.faiss_index_path)
+
+    sources_list, stream_generator = rag_pipeline.query_stream(query)
+
+    def event_generator():
+        answer = ""
+        for token in stream_generator:
+            answer += token
+            yield json.dumps({"delta": token}) + "\n"
+        
+        # Save chat history after generation
+        save_chat(
+            db=db,
+            user_id=current_user.id,
+            repository_url=repo.repo_url,
+            query_text=query,
+            response_text=answer
+        )
+        
+        common_prefix = _get_common_prefix_for_repo(rag_pipeline)
+        
+        final_sources = [
+            {
+                "file": _format_source_path(meta.file_path, common_prefix),
+                "symbol": meta.symbol_name,
+                "line": meta.start_line
+            }
+            for meta, score in sources_list
+        ]
+        
+        yield json.dumps({"done": True, "answer": answer, "sources": final_sources}) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 def background_index(repo_url: str, save_path: str, repo_id: int):
     db: Session = SessionLocal()
     temp_dir: str | None = None

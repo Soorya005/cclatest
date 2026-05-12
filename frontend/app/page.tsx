@@ -19,6 +19,7 @@ import {
   apiIndexRepository,
   apiGetRepositoryStatus,
   apiQueryRepository,
+  apiStreamQuery,
   type QuerySource,
   type RepositoryTreeNode,
 } from "@/lib/api"
@@ -52,6 +53,7 @@ export default function Home() {
   const [syncApiKey, setSyncApiKey] = useState<string | null>(null)
   const [showSyncModal, setShowSyncModal] = useState(false)
   const [copiedField, setCopiedField] = useState<string | null>(null)
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
@@ -308,8 +310,18 @@ export default function Home() {
       content: query,
       timestamp: new Date(),
     }
-    setMessages((prev: Message[]) => [...prev, userMessage])
+    
+    const assistantMessageId = crypto.randomUUID()
+    const placeholderMessage: Message = {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+    }
+
+    setMessages((prev: Message[]) => [...prev, userMessage, placeholderMessage])
     setIsLoadingMessage(true)
+    setStreamingMessageId(assistantMessageId)
 
     setSessions((prev: StoredChatSession[]) =>
       prev.map((s: StoredChatSession) =>
@@ -318,7 +330,7 @@ export default function Home() {
             ...s,
             messages: s.messages + 1,
             title: s.messages === 0 ? query.slice(0, 40) + "..." : s.title,
-            history: [...(s.history ?? []), userMessage],
+            history: [...(s.history ?? []), userMessage, placeholderMessage],
             repoUrl: currentRepo,
             repoId: currentRepoId,
             repoStatus,
@@ -329,53 +341,55 @@ export default function Home() {
     )
 
     try {
-      const result = await apiQueryRepository(token, currentRepoId, query)
+      const result = await apiStreamQuery(token, currentRepoId, query, (delta) => {
+        setIsLoadingMessage(false)
+        setMessages((prev) => 
+          prev.map((m) => m.id === assistantMessageId ? { ...m, content: m.content + delta } : m)
+        )
+        setSessions((prev) => 
+          prev.map((s) => s.id === activeSessionId ? {
+            ...s,
+            history: s.history?.map((m) => m.id === assistantMessageId ? { ...m, content: m.content + delta } : m)
+          } : s)
+        )
+      })
 
-      // Format sources as a readable codeBlock
-      const sourceSummary =
-        result.sources && result.sources.length > 0
-          ? result.sources
-            .map((s: QuerySource) => `${s.file}:${s.line}  [${s.symbol}]`)
-            .join("\n")
-          : null
-
-      const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: result.answer,
-        timestamp: new Date(),
-        codeBlocks: sourceSummary
-          ? [{ language: "text", code: `📚 Sources retrieved:\n${sourceSummary}` }]
-          : undefined,
-      }
-      setMessages((prev: Message[]) => [...prev, assistantMessage])
+      setMessages((prev: Message[]) => 
+        prev.map((m) => m.id === assistantMessageId ? {
+          ...m,
+          content: result.answer,
+          sources: result.sources.length > 0 ? result.sources : undefined
+        } : m)
+      )
+      
       setSessions((prev: StoredChatSession[]) =>
         prev.map((s: StoredChatSession) =>
           s.id === activeSessionId
             ? {
               ...s,
-              messages: s.messages + 1,
-              history: [...(s.history ?? []), assistantMessage],
+              history: s.history?.map((m) => m.id === assistantMessageId ? {
+                ...m,
+                content: result.answer,
+                sources: result.sources.length > 0 ? result.sources : undefined
+              } : m),
               timestamp: new Date(),
             }
             : s
         )
       )
     } catch (err: unknown) {
-      const errorMessage: Message = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: `❌ Error: ${err instanceof Error ? err.message : "Failed to get response from backend."}`,
-        timestamp: new Date(),
-      }
-      setMessages((prev: Message[]) => [...prev, errorMessage])
+      const errorContent = `❌ Error: ${err instanceof Error ? err.message : "Failed to get response from backend."}`
+      
+      setMessages((prev: Message[]) => 
+        prev.map((m) => m.id === assistantMessageId ? { ...m, content: errorContent } : m)
+      )
+      
       setSessions((prev: StoredChatSession[]) =>
         prev.map((s: StoredChatSession) =>
           s.id === activeSessionId
             ? {
               ...s,
-              messages: s.messages + 1,
-              history: [...(s.history ?? []), errorMessage],
+              history: s.history?.map((m) => m.id === assistantMessageId ? { ...m, content: errorContent } : m),
               timestamp: new Date(),
             }
             : s
@@ -383,6 +397,7 @@ export default function Home() {
       )
     } finally {
       setIsLoadingMessage(false)
+      setStreamingMessageId(null)
     }
   }
 
@@ -475,7 +490,12 @@ export default function Home() {
           {/* Chat Pane */}
           <div className="w-80 lg:w-96 flex-shrink-0 flex flex-col bg-muted/5">
             <div className="flex-1 min-h-0 overflow-hidden">
-              <AIExplanationPanel messages={messages} isLoading={isLoadingMessage} />
+              <AIExplanationPanel 
+                messages={messages} 
+                isLoading={isLoadingMessage} 
+                streamingMessageId={streamingMessageId ?? undefined}
+                onSourceClick={handleSelectFile}
+              />
             </div>
             <QueryInput
               onSubmit={handleSendQuery}
