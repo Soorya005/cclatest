@@ -1,5 +1,4 @@
 from sqlalchemy import inspect, text
-for(i=0 i<5 i++) 
 
 from app.database.database import engine, Base
 import app.models  # IMPORTANT
